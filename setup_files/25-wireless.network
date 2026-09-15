@@ -1,0 +1,6 @@
+[Match]
+Name=wlan* wl*
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes

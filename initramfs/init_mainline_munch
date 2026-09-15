@@ -1,0 +1,141 @@
+#!/bin/busybox sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+# Install busybox applets
+/bin/busybox --install -s /bin 2>/dev/null || true
+
+# Essential virtual filesystems
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev 2>/dev/null || true
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+
+echo "====================================================="
+echo "   POCO F4 (munch) - Mainline Linux 6.19.6 Boot      "
+echo "   Target: Ubuntu 26.04.1 LTS + Native Systemd 259   "
+echo "====================================================="
+
+# Configure USB Gadget early in initramfs (RNDIS & CDC Ethernet)
+mkdir -p /sys/kernel/config
+mount -t configfs none /sys/kernel/config 2>/dev/null || true
+
+if [ -d /sys/kernel/config/usb_gadget ]; then
+    mkdir -p /sys/kernel/config/usb_gadget/g1
+    cd /sys/kernel/config/usb_gadget/g1
+    echo 0x1d6b > idVendor
+    echo 0x0104 > idProduct
+    mkdir -p strings/0x409
+    echo 1140d081 > strings/0x409/serialnumber
+    echo Xiaomi > strings/0x409/manufacturer
+    echo "POCO F4 Linux Server" > strings/0x409/product
+    mkdir -p configs/c.1/strings/0x409
+    echo "Network" > configs/c.1/strings/0x409/configuration
+    echo 250 > configs/c.1/MaxPower
+    mkdir -p functions/rndis.usb0 2>/dev/null || mkdir -p functions/ecm.usb0 2>/dev/null || true
+    for fn in functions/*; do
+        if [ -d "$fn" ]; then
+            echo "34:c9:f0:11:40:d1" > "$fn/host_addr" 2>/dev/null || true
+            echo "34:c9:f0:11:40:d0" > "$fn/dev_addr" 2>/dev/null || true
+            ln -sf "$fn" configs/c.1/ 2>/dev/null || true
+        fi
+    done
+    UDC=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+    [ -z "$UDC" ] && UDC="a600000.dwc3"
+    echo "$UDC" > UDC 2>/dev/null || true
+    cd /
+fi
+
+# Bring up IP on rndis0 or usb0
+for i in 1 2 3 4 5; do
+    for iface in rndis0 usb0 eth0; do
+        if [ -d "/sys/class/net/$iface" ]; then
+            ifconfig "$iface" 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null || true
+            break 2
+        fi
+    done
+    sleep 1
+done
+
+# Start Telnet rescue server on port 23
+/bin/busybox telnetd -p 23 -l /bin/sh 2>/dev/null || true
+
+# Wait for root block device (UFS storage userdata partition)
+ROOTDEV=""
+for i in $(seq 1 15); do
+    for dev in /dev/sda34 /dev/block/sda34 /dev/block/by-name/userdata; do
+        if [ -b "$dev" ]; then
+            ROOTDEV="$dev"
+            break 2
+        fi
+    done
+    BY_UUID=$(blkid -t UUID="e2983815-6c85-4693-90be-34103c9de1f3" -o device 2>/dev/null)
+    if [ -n "$BY_UUID" ] && [ -b "$BY_UUID" ]; then
+        ROOTDEV="$BY_UUID"
+        break
+    fi
+    echo "Waiting for root storage... ($i/15)"
+    sleep 1
+done
+
+if [ -z "$ROOTDEV" ]; then
+    echo "ERROR: Root device not found! Spawning emergency shell..."
+    while true; do
+        /bin/busybox sh
+        sleep 2
+    done
+fi
+
+echo "Mounting Ubuntu 26.04 rootfs from $ROOTDEV..."
+mkdir -p /sysroot
+mount -t ext4 -o rw,noatime "$ROOTDEV" /sysroot
+
+# Auto-deploy kernel modules if not present
+if [ -f /opt/modules.tar.gz ] && [ ! -d /sysroot/lib/modules/6.19.6-munch-ubuntu ]; then
+    echo "[*] First boot on Mainline 6.19.6: Deploying kernel modules to rootfs..."
+    mkdir -p /sysroot/lib/modules
+    tar -xzf /opt/modules.tar.gz -C /sysroot/ 2>/dev/null || true
+    echo "[+] Kernel modules deployed successfully!"
+fi
+
+# Auto-deploy ath11k Wi-Fi firmware if missing
+if [ -f /opt/ath11k_firmware.tar.gz ] && [ ! -f /sysroot/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin ]; then
+    echo "[*] Deploying QCA6390 ath11k firmware to /lib/firmware/..."
+    mkdir -p /sysroot/lib/firmware
+    tar -xzf /opt/ath11k_firmware.tar.gz -C /sysroot/lib/firmware/ 2>/dev/null || true
+    echo "[+] Firmware deployed successfully!"
+fi
+
+# Ensure network configuration for usb0 / rndis0 persists under systemd-networkd
+mkdir -p /sysroot/etc/systemd/network
+cat << 'NETEOF' > /sysroot/etc/systemd/network/10-gadget-usb.network 2>/dev/null || true
+[Match]
+Name=usb* rndis*
+
+[Network]
+Address=172.16.42.1/24
+NETEOF
+
+# Verify systemd init exists
+INIT_BIN=""
+for candidate in /lib/systemd/systemd /sbin/init /init; do
+    if [ -x "/sysroot$candidate" ]; then
+        INIT_BIN="$candidate"
+        break
+    fi
+done
+
+if [ -z "$INIT_BIN" ]; then
+    echo "ERROR: Init binary not found in /sysroot! Spawning rescue shell..."
+    while true; do
+        /bin/busybox sh
+        sleep 2
+    done
+fi
+
+echo "Moving mounts to /sysroot..."
+mkdir -p /sysroot/dev /sysroot/proc /sysroot/sys
+mount --move /sys /sysroot/sys 2>/dev/null || true
+mount --move /proc /sysroot/proc 2>/dev/null || true
+mount --move /dev /sysroot/dev 2>/dev/null || true
+
+echo "Switching root to $INIT_BIN as PID 1..."
+exec switch_root /sysroot "$INIT_BIN"

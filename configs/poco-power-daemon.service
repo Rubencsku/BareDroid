@@ -1,0 +1,15 @@
+[Unit]
+Description=POCO F4 AMOLED Power & Sleep Daemon (Power button + 60s Idle Screen Off)
+After=poco-desktop.service network.target
+Wants=poco-desktop.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/poco-power-daemon.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

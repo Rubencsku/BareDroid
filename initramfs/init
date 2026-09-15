@@ -1,0 +1,154 @@
+#!/bin/busybox sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+# Install busybox applets
+/bin/busybox --install -s /bin 2>/dev/null || true
+
+/bin/busybox mount -t proc proc /proc 2>/dev/null || true
+/bin/busybox mount -t sysfs sysfs /sys 2>/dev/null || true
+/bin/busybox mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+
+# CRITICAL character devices - DO NOT REDIRECT 2>/dev/null HERE!
+rm -f /dev/null /dev/zero /dev/urandom
+/bin/busybox mknod -m 666 /dev/null c 1 3
+/bin/busybox mknod -m 666 /dev/zero c 1 5
+/bin/busybox mknod -m 666 /dev/urandom c 1 9
+
+# Devpts
+mkdir -p /dev/pts
+/bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
+
+# Set kernel firmware search path to /lib/firmware
+echo -n "/lib/firmware" > /sys/module/firmware_class/parameters/path 2>/dev/null || true
+
+echo "====================================================="
+echo "     POCO F4 (munch) - Pure Linux Initramfs v11      "
+echo "====================================================="
+
+# Setup USB gadget network (RNDIS / CDC)
+mkdir -p /sys/kernel/config
+/bin/busybox mount -t configfs none /sys/kernel/config 2>/dev/null || true
+
+if [ -d /sys/kernel/config/usb_gadget ]; then
+    mkdir -p /sys/kernel/config/usb_gadget/g1
+    cd /sys/kernel/config/usb_gadget/g1
+    echo 0x1d6b > idVendor
+    echo 0x0104 > idProduct
+    mkdir -p strings/0x409
+    echo 1140d081 > strings/0x409/serialnumber
+    echo Xiaomi > strings/0x409/manufacturer
+    echo "POCO F4 Linux Server" > strings/0x409/product
+    mkdir -p configs/c.1/strings/0x409
+    echo "Network" > configs/c.1/strings/0x409/configuration
+    echo 250 > configs/c.1/MaxPower
+    mkdir -p functions/rndis.usb0 2>/dev/null || mkdir -p functions/gsi.rndis 2>/dev/null || mkdir -p functions/ecm.usb0 2>/dev/null || true
+    for fn in functions/*; do
+        [ -d "$fn" ] && ln -sf "$fn" configs/c.1/ 2>/dev/null || true
+    done
+    UDC=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+    [ -z "$UDC" ] && UDC="a600000.dwc3"
+    echo "$UDC" > UDC 2>/dev/null || true
+    cd /
+fi
+
+# Bring up network interface on rndis0 or usb0
+for i in 1 2 3 4 5; do
+    /bin/busybox mdev -s 2>/dev/null || true
+    if [ -d /sys/class/net/rndis0 ]; then
+        /bin/busybox ifconfig rndis0 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null || true
+        break
+    elif [ -d /sys/class/net/usb0 ]; then
+        /bin/busybox ifconfig usb0 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null || true
+        break
+    fi
+    /bin/busybox sleep 1
+done
+
+# Bring up loopback interface
+/bin/busybox ifconfig lo 127.0.0.1 up 2>/dev/null || true
+
+# Start telnetd daemon on port 23
+/bin/busybox telnetd -p 23 -l /bin/sh
+
+# Start netcat shell listener on port 2323
+(
+    while true; do
+        /bin/busybox nc -l -p 2323 -e /bin/sh 2>/dev/null || true
+        /bin/busybox sleep 1
+    done
+) &
+
+# Background USB network keeper
+(
+    while true; do
+        for iface in rndis0 usb0 eth0; do
+            if [ -d "/sys/class/net/$iface" ]; then
+                /bin/busybox ifconfig "$iface" 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null || true
+            fi
+        done
+        if ! pgrep telnetd >/dev/null; then
+            /bin/busybox telnetd -p 23 -l /bin/sh 2>/dev/null || true
+        fi
+        /bin/busybox sleep 2
+    done
+) &
+
+# Find and mount userdata (sda34)
+ROOTDEV=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    /bin/busybox mdev -s 2>/dev/null || true
+    for dev in /dev/sda34 /dev/block/sda34 /dev/block/by-name/userdata; do
+        if [ -b "$dev" ]; then
+            ROOTDEV="$dev"
+            break 2
+        fi
+    done
+    /bin/busybox sleep 1
+done
+
+if [ -n "$ROOTDEV" ]; then
+    echo "Mounting Debian rootfs from $ROOTDEV..."
+    mkdir -p /sysroot
+    /bin/busybox mount -t ext4 -o rw,noatime "$ROOTDEV" /sysroot 2>/dev/null || true
+    
+    # Mount virtual filesystems into Debian chroot
+    mkdir -p /sysroot/dev /sysroot/dev/pts /sysroot/proc /sysroot/sys /sysroot/run /sysroot/tmp
+    /bin/busybox mount --bind /dev /sysroot/dev 2>/dev/null || true
+    /bin/busybox mount --bind /dev/pts /sysroot/dev/pts 2>/dev/null || true
+    /bin/busybox mount --bind /proc /sysroot/proc 2>/dev/null || true
+    /bin/busybox mount --bind /sys /sysroot/sys 2>/dev/null || true
+
+    # Mount modem partition for additional firmware
+    for modem_dev in /dev/sde30 /dev/block/by-name/modem_b /dev/block/by-name/modem_a; do
+        if [ -b "$modem_dev" ]; then
+            mkdir -p /sysroot/vendor/firmware_mnt /sysroot/mnt/modem
+            /bin/busybox mount -t vfat -o ro "$modem_dev" /sysroot/vendor/firmware_mnt 2>/dev/null || true
+            /bin/busybox mount -t vfat -o ro "$modem_dev" /sysroot/mnt/modem 2>/dev/null || true
+            break
+        fi
+    done
+
+    # Start Debian OpenSSH server in background
+    mkdir -p /sysroot/run/sshd
+    chroot /sysroot /usr/sbin/sshd 2>/dev/null || true
+
+    # Start Nginx in background
+    if [ -x /sysroot/usr/sbin/nginx ]; then
+        chroot /sysroot /usr/sbin/nginx 2>/dev/null || true
+    fi
+
+    # Trigger Wi-Fi startup script in background
+    if [ -x /sysroot/usr/local/bin/start_wifi.sh ]; then
+        chroot /sysroot /usr/local/bin/start_wifi.sh > /sysroot/var/log/wifi_boot.log 2>&1 &
+    fi
+
+    # Trigger Desktop Remote Services (XRDP, TigerVNC, noVNC) in background
+    if [ -x /sysroot/usr/local/bin/start_desktop.sh ]; then
+        chroot /sysroot /usr/local/bin/start_desktop.sh > /sysroot/var/log/desktop_boot.log 2>&1 &
+    fi
+fi
+
+echo "POCO F4 Pure Linux Shell ready on 172.16.42.1:23 (Telnet), 172.16.42.1:2323 (NC), and 172.16.42.1:22 (SSH)"
+while true; do
+    /bin/busybox sleep 5
+done

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# poco-screen - Control de Pantalla AMOLED y Brillo para POCO F4 (munch)
+# ==============================================================================
+set -e
+
+BACKLIGHT=$(ls -d /sys/class/backlight/* 2>/dev/null | head -n1)
+[ -z "$BACKLIGHT" ] && BACKLIGHT="/sys/class/backlight/ae94000.dsi.0"
+DRM_CONNECTOR="/sys/class/drm/card0-DSI-1"
+BRIGHTNESS_FILE="$BACKLIGHT/brightness"
+STATE_FILE="/run/poco-screen-brightness"
+
+get_status() {
+    local bright="0"
+    local max="2047"
+    local enabled="No"
+
+    [ -f "$BRIGHTNESS_FILE" ] && bright=$(cat "$BRIGHTNESS_FILE")
+    [ -f "$BACKLIGHT/max_brightness" ] && max=$(cat "$BACKLIGHT/max_brightness")
+    [ -f "$DRM_CONNECTOR/enabled" ] && enabled=$(cat "$DRM_CONNECTOR/enabled")
+
+    echo "=== POCO F4 AMOLED Status ==="
+    echo "  DRM Enabled : $enabled"
+    echo "  Brightness  : $bright / $max"
+    if [ "$bright" -eq 0 ]; then
+        echo "  Display     : [OFF / ASLEEP]"
+    else
+        echo "  Display     : [ON / ACTIVE]"
+    fi
+}
+
+screen_off() {
+    echo "[*] Turning AMOLED screen OFF (saving energy & preventing burn-in)..."
+    if [ -f "$BRIGHTNESS_FILE" ]; then
+        local current=$(cat "$BRIGHTNESS_FILE")
+        if [ "$current" -gt 0 ]; then
+            echo "$current" > "$STATE_FILE" 2>/dev/null || true
+        fi
+        echo 0 > "$BRIGHTNESS_FILE" 2>/dev/null || true
+    fi
+    echo "[+] Screen is now OFF."
+}
+
+screen_on() {
+    echo "[*] Turning AMOLED screen ON..."
+    local target=600
+    if [ -f "$STATE_FILE" ]; then
+        local saved=$(cat "$STATE_FILE")
+        [ "$saved" -gt 0 ] && target="$saved"
+    fi
+    # Ensure DRM connector is on via wlr-randr if wayland is running
+    su - poco -c 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 wlr-randr --output DSI-1 --on --scale 2' >/dev/null 2>&1 || true
+    if [ -f "$BRIGHTNESS_FILE" ]; then
+        echo "$target" > "$BRIGHTNESS_FILE" 2>/dev/null || true
+    fi
+    echo "[+] Screen is now ON (Brightness: $target)."
+}
+
+screen_toggle() {
+    local bright=600
+    [ -f "$BRIGHTNESS_FILE" ] && bright=$(cat "$BRIGHTNESS_FILE")
+
+    if [ "$bright" -eq 0 ]; then
+        screen_on
+    else
+        screen_off
+    fi
+}
+
+set_brightness() {
+    local val="$1"
+    if ! [[ "$val" =~ ^[0-9]+$ ]]; then
+        echo "Error: Brillo debe ser un número entero entre 0 y 2047"
+        exit 1
+    fi
+    if [ "$val" -lt 0 ] || [ "$val" -gt 2047 ]; then
+        echo "Error: Brillo fuera de rango (0 - 2047)"
+        exit 1
+    fi
+    echo "$val" > "$BRIGHTNESS_FILE"
+    echo "[+] Brillo ajustado a $val"
+}
+
+case "$1" in
+    off)
+        screen_off
+        ;;
+    on)
+        screen_on
+        ;;
+    toggle)
+        screen_toggle
+        ;;
+    status)
+        get_status
+        ;;
+    brightness)
+        set_brightness "$2"
+        ;;
+    *)
+        echo "Uso: poco-screen {on|off|toggle|status|brightness <0-2047>}"
+        exit 1
+        ;;
+esac
