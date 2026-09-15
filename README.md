@@ -1,10 +1,26 @@
 # BareDroid
 
-BareDroid is an experimental project for running a full Linux distribution directly on Android smartphones. The current supported target is the Xiaomi POCO F4 / Redmi K40S (`munch`) with a Qualcomm Snapdragon 870.
+BareDroid turns Android smartphones into native Linux home servers. Its main goal is to reuse capable, energy-efficient phones as always-on machines for self-hosted services, Docker containers, storage, automation and other home-lab workloads.
+
+This is a full Linux environment running directly on the phone: no chroot, Termux, PRoot, container-based Linux distribution or Android compatibility layer is required. The current supported target is the Xiaomi POCO F4 / Redmi K40S (`munch`) with a Qualcomm Snapdragon 870.
 
 The current reference system boots Ubuntu ARM64 natively from the phone's UFS storage using a Linux Mainline 6.19.6 kernel. Android is still used as the bootloader environment, but it is not used as a runtime layer: the Linux kernel starts `systemd` as PID 1 and mounts the Linux root filesystem directly.
 
 > **Status:** Experimental. The documented and tested target is POCO F4 (`munch`). Flashing boot images can make a phone unbootable and can erase user data. Read the recovery and backup documentation before continuing.
+
+## A full Linux home server on a phone
+
+The reference installation boots Ubuntu 26.04 ARM64 with Linux Mainline 6.19.6, native `systemd`, direct access to the phone's CPU, memory and UFS storage, and standard Linux server tooling.
+
+![BareDroid running a full Ubuntu ARM64 system on a POCO F4](docs/images/baredroid-full-linux-status.png)
+
+*A native Ubuntu ARM64 userspace running on the POCO F4 with Linux Mainline, systemd and an ext4 root filesystem.*
+
+Docker runs directly on this Linux environment, allowing the phone to host conventional ARM64 services and application stacks. The example below shows running Odoo and PostgreSQL with PGVector containers.
+
+![Docker containers running on the BareDroid home server](docs/images/baredroid-docker-containers.png)
+
+*Docker containers running natively on BareDroid as home-server workloads.*
 
 ## What works in the current reference build
 
@@ -15,6 +31,7 @@ The current reference system boots Ubuntu ARM64 natively from the phone's UFS st
 | Kernel | Linux Mainline 6.19.6, custom `munch` device tree |
 | Userspace | Ubuntu 26.04 ARM64 minimal server |
 | Init | Native `systemd` |
+| Containers | Docker Engine with native ARM64 containers |
 | Wi-Fi | QCA6390 through the Mainline `ath11k_pci` driver |
 | Recovery network | USB Gadget Ethernet, normally `172.16.42.1/24` |
 | Boot model | Android A/B slots; Mainline is installed in slot B |
