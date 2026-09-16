@@ -6,6 +6,10 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 # Essential virtual filesystems
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts
+mount -t devpts -o gid=5,mode=620,ptmxmode=666 devpts /dev/pts 2>/dev/null \
+    || mount -t devpts devpts /dev/pts 2>/dev/null \
+    || true
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 
