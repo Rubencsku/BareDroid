@@ -9,6 +9,7 @@ The current supported documentation targets Linux Mainline 6.19.6 and Ubuntu ARM
 - [Recover or roll back](recovery.md)
 - [Troubleshoot a failure](troubleshooting.md)
 - [Review hardware support and limitations](hardware.md)
+- [Read the v1.0.1-munch release notes](releases/v1.0.1-munch.md)
 - [Read the v1.0.0-munch release notes](releases/v1.0.0-munch.md)
 
 ## Developer guides

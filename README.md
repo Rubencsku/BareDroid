@@ -67,6 +67,7 @@ The build scripts are useful but are not yet a fully self-contained clean-clone 
 - [Recovery, backups and rollback](docs/recovery.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Hardware, support status and limitations](docs/hardware.md)
+- [Release notes for v1.0.1-munch](docs/releases/v1.0.1-munch.md)
 - [Release notes for v1.0.0-munch](docs/releases/v1.0.0-munch.md)
 - [Legacy Debian and UEFI work](docs/legacy/README.md)
 - [Contributing](CONTRIBUTING.md)
