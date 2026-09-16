@@ -6,12 +6,13 @@ BareDroid boot images contain the kernel and early userspace, not a complete Lin
 
 The Mainline initramfs searches for the root filesystem in this order:
 
-1. `/dev/sda34`
-2. `/dev/block/sda34`
-3. `/dev/block/by-name/userdata`
-4. The development UUID currently embedded in `initramfs/init_mainline_munch`
+1. The `root=` value from the kernel command line.
+2. The reference `/dev/sda34` and userdata compatibility paths.
+3. UFS partitions containing an ext4 filesystem with an executable systemd or `/sbin/init`.
 
-The block-device number and embedded UUID are implementation details from the reference phone. Before supporting another storage layout, replace this logic with a stable partition identifier and test the recovery path.
+Direct device paths, `PARTUUID=` and `PARTLABEL=` values are resolved without requiring udev or `blkid`. `UUID=` and `LABEL=` values are supported when the initramfs includes `blkid`. Every candidate is probed read-only and accepted only if it contains a usable init; the selected root is then mounted read-write.
+
+`/dev/sda34` remains an implementation detail from the reference phone, not a universal partition number. A custom layout can provide another device through `root=`, while validated discovery provides a fallback if the command line is stale.
 
 The filesystem must be ext4 and must contain a bootable ARM64 userspace. The initramfs eventually runs:
 

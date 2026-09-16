@@ -62,21 +62,118 @@ done
 # Start Telnet rescue server on port 23
 /bin/busybox telnetd -p 23 -l /bin/sh 2>/dev/null || true
 
-# Wait for root block device (UFS storage userdata partition)
+# Resolve a PARTUUID or PARTLABEL directly from sysfs. This does not depend on
+# udev-created /dev/disk links or on an optional BusyBox blkid applet.
+resolve_partition_spec() {
+    match_key="$1"
+    match_value="$2"
+
+    for uevent in /sys/class/block/*/uevent; do
+        [ -f "$uevent" ] || continue
+        DEVNAME=""
+        PARTUUID=""
+        PARTNAME=""
+
+        while IFS='=' read -r key value; do
+            case "$key" in
+                DEVNAME) DEVNAME="$value" ;;
+                PARTUUID) PARTUUID="$value" ;;
+                PARTNAME) PARTNAME="$value" ;;
+            esac
+        done < "$uevent"
+
+        case "$match_key" in
+            PARTUUID) actual_value="$PARTUUID" ;;
+            PARTLABEL) actual_value="$PARTNAME" ;;
+            *) actual_value="" ;;
+        esac
+
+        if [ "$actual_value" = "$match_value" ] && [ -b "/dev/$DEVNAME" ]; then
+            echo "/dev/$DEVNAME"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+resolve_root_spec() {
+    root_spec="$1"
+
+    case "$root_spec" in
+        /dev/*)
+            echo "$root_spec"
+            ;;
+        PARTUUID=*)
+            resolve_partition_spec PARTUUID "${root_spec#PARTUUID=}"
+            ;;
+        PARTLABEL=*)
+            resolve_partition_spec PARTLABEL "${root_spec#PARTLABEL=}"
+            ;;
+        UUID=*|LABEL=*)
+            if command -v blkid >/dev/null 2>&1; then
+                blkid -t "$root_spec" -o device 2>/dev/null | head -n 1
+            fi
+            ;;
+    esac
+}
+
+# A block device is accepted only when it mounts as ext4 and contains a usable
+# init. Probe read-only without journal replay before mounting the selected root
+# read-write.
+try_root_device() {
+    candidate="$1"
+    [ -n "$candidate" ] && [ -b "$candidate" ] || return 1
+
+    umount /sysroot 2>/dev/null || true
+    if ! mount -t ext4 -o ro,noload "$candidate" /sysroot 2>/dev/null; then
+        return 1
+    fi
+
+    valid_root=false
+    for candidate_init in /lib/systemd/systemd /sbin/init; do
+        if [ -x "/sysroot$candidate_init" ]; then
+            valid_root=true
+            break
+        fi
+    done
+    umount /sysroot 2>/dev/null || true
+
+    [ "$valid_root" = true ] || return 1
+    if mount -t ext4 -o rw,noatime "$candidate" /sysroot 2>/dev/null; then
+        ROOTDEV="$candidate"
+        return 0
+    fi
+
+    return 1
+}
+
+# Prefer the root= kernel argument. Keep the historical userdata paths as
+# compatibility candidates, then scan UFS partitions for a validated rootfs.
+ROOT_SPEC=""
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        root=*) ROOT_SPEC="${arg#root=}" ;;
+    esac
+done
+
 ROOTDEV=""
+mkdir -p /sysroot
 for i in $(seq 1 15); do
-    for dev in /dev/sda34 /dev/block/sda34 /dev/block/by-name/userdata; do
-        if [ -b "$dev" ]; then
-            ROOTDEV="$dev"
+    CMDLINE_ROOT=$(resolve_root_spec "$ROOT_SPEC")
+    for dev in "$CMDLINE_ROOT" /dev/sda34 /dev/block/sda34 /dev/block/by-name/userdata; do
+        if try_root_device "$dev"; then
             break 2
         fi
     done
-    BY_UUID=$(blkid -t UUID="e2983815-6c85-4693-90be-34103c9de1f3" -o device 2>/dev/null)
-    if [ -n "$BY_UUID" ] && [ -b "$BY_UUID" ]; then
-        ROOTDEV="$BY_UUID"
-        break
-    fi
-    echo "Waiting for root storage... ($i/15)"
+
+    for dev in /dev/sd[a-z][0-9]*; do
+        if try_root_device "$dev"; then
+            break 2
+        fi
+    done
+
+    echo "Waiting for a valid root filesystem... ($i/15)"
     sleep 1
 done
 
@@ -88,9 +185,7 @@ if [ -z "$ROOTDEV" ]; then
     done
 fi
 
-echo "Mounting Ubuntu 26.04 rootfs from $ROOTDEV..."
-mkdir -p /sysroot
-mount -t ext4 -o rw,noatime "$ROOTDEV" /sysroot
+echo "Mounted Ubuntu 26.04 rootfs from $ROOTDEV."
 
 # Auto-deploy kernel modules if not present
 if [ -f /opt/modules.tar.gz ] && [ ! -d /sysroot/lib/modules/6.19.6-munch-ubuntu ]; then

@@ -50,7 +50,7 @@ blkid
 dmesg | grep -i -E 'ufs|scsi|sda|ext4'
 ```
 
-The current command line and initramfs assume the reference layout at `/dev/sda34`. Confirm the partition by label, UUID and size before changing any filesystem.
+The initramfs prefers the kernel `root=` argument, retains `/dev/sda34` as a compatibility fallback and can discover an ext4 root containing systemd. Confirm the selected device in the boot log before changing any filesystem.
 
 ## The ext4 mount fails
 

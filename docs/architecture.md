@@ -57,7 +57,7 @@ root=/dev/sda34 rw rootwait rootfstype=ext4 swiotlb=2048
 loop.max_part=7 systemd.journald.forward_to_console=1
 ```
 
-`root=/dev/sda34` is specific to the tested layout. A future multi-device design should generate the command line from per-device metadata and prefer a stable PARTUUID or filesystem UUID.
+`root=/dev/sda34` is the default for the tested layout. The initramfs honors a different `root=` argument and validates the mounted filesystem before `switch_root`; it also retains validated discovery for stale or custom layouts. Stable PARTUUID values remain preferable when a deployment controls its partition table.
 
 ## Initramfs responsibilities
 
@@ -67,7 +67,7 @@ loop.max_part=7 systemd.journald.forward_to_console=1
 2. Creates an RNDIS or ECM USB Ethernet gadget.
 3. Assigns `172.16.42.1/24` to the gadget interface.
 4. Starts the emergency Telnet shell.
-5. Locates and mounts the ext4 root filesystem.
+5. Resolves `root=`, validates ext4 candidates and mounts the filesystem containing systemd.
 6. Deploys matching kernel modules and QCA6390 firmware when embedded.
 7. Writes a persistent networkd configuration for the USB interface.
 8. Moves the virtual filesystems and calls `switch_root`.

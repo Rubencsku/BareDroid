@@ -34,7 +34,7 @@ The repository can use a local `platform-tools/` directory when one is present; 
 ```bash
 git clone https://github.com/Rubencsku/BareDroid.git
 cd BareDroid
-git checkout v1.0.1-munch
+git checkout v1.0.2-munch
 ```
 
 Boot the phone into fastboot mode, connect it and run:
